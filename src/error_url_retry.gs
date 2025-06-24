@@ -7,6 +7,7 @@
  * 結果シートからERRORになったURLを特定して再実行
  */
 function retryErrorUrls() {
+  const startTime = new Date().getTime();
   const config = getConfig();
   Logger.log('=== エラーURL再実行開始 ===');
 
@@ -16,69 +17,97 @@ function retryErrorUrls() {
 
     if (errorUrls.length === 0) {
       Logger.log('再実行対象のエラーURLはありません');
-      return { processedCount: 0, successCount: 0 };
+      return { processedCount: 0, successCount: 0, hasMoreUrls: false };
     }
 
     Logger.log(`エラーURL数: ${errorUrls.length}件`);
 
-    let processedCount = 0;
-    let successCount = 0;
+    const result = processErrorUrlsWithTimeLimit(startTime, errorUrls);
 
-    for (let i = 0; i < errorUrls.length; i++) {
-      const errorData = errorUrls[i];
-
-      try {
-        Logger.log(`エラーURL再実行中 ${i + 1}/${errorUrls.length}: ${errorData.url}`);
-
-        // スクレイピング実行
-        const hotelData = scrapeHotelFromUrl(errorData.url);
-
-        // 結果シートの該当行を更新（エラー行を正常データで上書き）
-        updateResultSheetRow(config.SPREADSHEET_ID, config.SHEET_NAME, errorData.rowIndex, hotelData);
-
-        // マスタシートの最終クロール日時を更新
-        const masterRowIndex = findMasterSheetRowByUrl(config.SPREADSHEET_ID, config.MASTER_SHEET_NAME, errorData.url);
-        if (masterRowIndex > 0) {
-          updateLastCrawledAt(config.SPREADSHEET_ID, config.MASTER_SHEET_NAME, masterRowIndex, new Date());
-        }
-
-        successCount++;
-        processedCount++;
-
-        Logger.log(`エラーURL再実行成功: ${errorData.url}`);
-
-        // リクエスト間隔を空ける
-        if (i < errorUrls.length - 1) {
-          Utilities.sleep(config.REQUEST_DELAY);
-        }
-
-      } catch (error) {
-        Logger.log(`エラーURL再実行失敗: ${errorData.url} - ${error.toString()}`);
-
-        // エラー情報を更新（再実行した日時で更新）
-        const updatedErrorData = {
-          title: 'ERROR (RETRY)',
-          score: '',
-          total: '',
-          address: '',
-          tel: '',
-          totalRooms: '',
-          url: errorData.url,
-          error: `${error.toString()} (再実行: ${new Date().toLocaleString()})`
-        };
-
-        updateResultSheetRow(config.SPREADSHEET_ID, config.SHEET_NAME, errorData.rowIndex, updatedErrorData);
-        processedCount++;
-      }
+    if (result.hasMoreUrls) {
+      Logger.log(`エラーURL再実行: 時間制限により中断。処理 ${result.processedCount}件, 成功 ${result.successCount}件`);
+      Logger.log(`残り ${errorUrls.length - result.processedCount}件のエラーURLがあります`);
+    } else {
+      Logger.log(`エラーURL再実行完了: 処理 ${result.processedCount}件, 成功 ${result.successCount}件`);
     }
 
-    Logger.log(`エラーURL再実行完了: 処理 ${processedCount}件, 成功 ${successCount}件`);
-    return { processedCount, successCount };
+    return result;
 
   } catch (error) {
     Logger.log(`エラーURL再実行処理エラー: ${error.toString()}`);
     throw error;
   }
+}
+
+/**
+ * 実行時間制限を考慮したエラーURL処理
+ */
+function processErrorUrlsWithTimeLimit(startTime, errorUrls) {
+  const config = getConfig();
+  const EXECUTION_TIME_LIMIT = 300; // 5分（300秒）
+  const SAFETY_MARGIN = 30; // 安全マージン（30秒）
+
+  let processedCount = 0;
+  let successCount = 0;
+
+  for (let i = 0; i < errorUrls.length; i++) {
+    // 実行時間をチェック
+    const currentTime = new Date().getTime();
+    const elapsedTime = (currentTime - startTime) / 1000; // 秒
+
+    if (elapsedTime > (EXECUTION_TIME_LIMIT - SAFETY_MARGIN)) {
+      Logger.log(`実行時間制限に近づきました。処理を中断します。経過時間: ${Math.round(elapsedTime)}秒`);
+      return { processedCount, successCount, hasMoreUrls: true };
+    }
+
+    const errorData = errorUrls[i];
+
+    try {
+      Logger.log(`エラーURL再実行中 ${i + 1}/${errorUrls.length}: ${errorData.url} (経過時間: ${Math.round(elapsedTime)}秒)`);
+
+      // スクレイピング実行
+      const hotelData = scrapeHotelFromUrl(errorData.url);
+
+      // 結果シートの該当行を更新（エラー行を正常データで上書き）
+      updateResultSheetRow(config.SPREADSHEET_ID, config.SHEET_NAME, errorData.rowIndex, hotelData);
+
+      // マスタシートの最終クロール日時を更新
+      const masterRowIndex = findMasterSheetRowByUrl(config.SPREADSHEET_ID, config.MASTER_SHEET_NAME, errorData.url);
+      if (masterRowIndex > 0) {
+        updateLastCrawledAt(config.SPREADSHEET_ID, config.MASTER_SHEET_NAME, masterRowIndex, new Date());
+      }
+
+      successCount++;
+      processedCount++;
+
+      Logger.log(`エラーURL再実行成功: ${errorData.url}`);
+
+      // リクエスト間隔を空ける
+      if (i < errorUrls.length - 1) {
+        Utilities.sleep(config.REQUEST_DELAY);
+      }
+
+    } catch (error) {
+      Logger.log(`エラーURL再実行失敗: ${errorData.url} - ${error.toString()}`);
+
+      // エラー情報を更新（再実行した日時で更新）
+      const updatedErrorData = {
+        title: 'ERROR (RETRY)',
+        score: '',
+        total: '',
+        address: '',
+        tel: '',
+        totalRooms: '',
+        url: errorData.url,
+        error: `${error.toString()} (再実行: ${new Date().toLocaleString()})`
+      };
+
+      updateResultSheetRow(config.SPREADSHEET_ID, config.SHEET_NAME, errorData.rowIndex, updatedErrorData);
+      processedCount++;
+    }
+  }
+
+  return { processedCount, successCount, hasMoreUrls: false };
 }
 
 /**
@@ -214,8 +243,8 @@ function dailyRetryErrorUrls() {
   Logger.log('=== 日次エラーURL再実行開始 ===');
 
   try {
-    const result = retryErrorUrls();
-    Logger.log(`日次エラーURL再実行完了: 処理 ${result.processedCount}件, 成功 ${result.successCount}件`);
+    // 進捗管理機能付きエラーURL再実行を使用
+    retryErrorUrlsWithProgressTracking();
 
   } catch (error) {
     Logger.log(`日次エラーURL再実行エラー: ${error.toString()}`);
@@ -223,11 +252,11 @@ function dailyRetryErrorUrls() {
 }
 
 /**
- * エラーURL再実行のステータス確認
+ * エラーURL再実行のステータス確認（統合版）
  */
-function showErrorRetryStatus() {
+function showErrorRetryStatusLegacy() {
   const config = getConfig();
-  Logger.log('=== エラーURL再実行ステータス ===');
+  Logger.log('=== エラーURL再実行ステータス（従来版） ===');
 
   try {
     // エラーURLの件数を確認
@@ -254,6 +283,10 @@ function showErrorRetryStatus() {
     } else {
       Logger.log('日次エラーURL再実行トリガー: 未設定');
     }
+
+    // 新しいステータス確認も表示
+    Logger.log('\n--- 進捗管理機能付きステータス ---');
+    showErrorRetryStatus();
 
   } catch (error) {
     Logger.log(`ステータス確認エラー: ${error.toString()}`);
@@ -307,5 +340,298 @@ function clearErrorRetryTriggers() {
 
   } catch (error) {
     Logger.log(`エラーURL再実行トリガークリアエラー: ${error.toString()}`);
+  }
+}
+
+/**
+ * 進捗管理機能付きエラーURL再実行
+ */
+function retryErrorUrlsWithProgressTracking() {
+  const startTime = new Date().getTime();
+  const config = getConfig();
+
+  try {
+    // 実行進捗を取得
+    const progress = getErrorRetryProgress();
+    Logger.log(`=== 進捗管理付きエラーURL再実行開始 ===`);
+    Logger.log(`開始時点での処理済み件数: ${progress.totalProcessed}`);
+
+    const result = processErrorUrlsWithProgressTracking(startTime, progress);
+
+    if (result.hasMoreUrls) {
+      Logger.log(`実行時間制限により処理中断。今回処理件数: ${result.processedThisRun}件`);
+      Logger.log(`累計処理件数: ${progress.totalProcessed + result.processedThisRun}件`);
+
+      // 進捗を保存
+      saveErrorRetryProgress(progress.totalProcessed + result.processedThisRun);
+
+      // 次回実行をスケジュール
+      try {
+        scheduleNextErrorRetryExecution();
+        Logger.log('次回実行スケジュール設定完了');
+      } catch (scheduleError) {
+        Logger.log(`スケジュール設定エラー: ${scheduleError.toString()}`);
+        // スケジュール設定に失敗した場合も進捗は保存されているので、手動再実行可能
+      }
+    } else {
+      Logger.log(`全エラーURL再実行完了。今回処理件数: ${result.processedThisRun}件`);
+      Logger.log(`累計処理件数: ${progress.totalProcessed + result.processedThisRun}件`);
+
+      // 進捗をリセット
+      clearErrorRetryProgress();
+
+      // トリガーをクリア
+      clearErrorRetryProgressTriggers();
+    }
+
+  } catch (error) {
+    Logger.log('進捗管理付きエラーURL再実行エラー: ' + error.toString());
+
+    // エラーが発生した場合でも、未処理URLがあるかチェックして継続処理を試行
+    try {
+      const errorUrls = getErrorUrlsFromResultSheet(config.SPREADSHEET_ID, config.SHEET_NAME);
+      if (errorUrls.length > 0) {
+        Logger.log(`エラー発生時に未処理URL ${errorUrls.length}件を確認。継続処理を試行します。`);
+        // 少し時間を置いて再試行をスケジュール
+        setTimeout(() => {
+          try {
+            scheduleNextErrorRetryExecution();
+            Logger.log('エラー後の継続処理スケジュール設定完了');
+          } catch (retryScheduleError) {
+            Logger.log(`エラー後のスケジュール設定失敗: ${retryScheduleError.toString()}`);
+          }
+        }, 5000); // 5秒後に再試行
+      }
+    } catch (checkError) {
+      Logger.log(`エラー後の状況確認失敗: ${checkError.toString()}`);
+    }
+  }
+}
+
+/**
+ * 進捗管理付きエラーURL処理
+ */
+function processErrorUrlsWithProgressTracking(startTime, progress) {
+  const config = getConfig();
+  const EXECUTION_TIME_LIMIT = 300; // 5分（300秒）
+  const SAFETY_MARGIN = 30; // 安全マージン（30秒）
+
+  // エラーURLを取得
+  const errorUrls = getErrorUrlsFromResultSheet(config.SPREADSHEET_ID, config.SHEET_NAME);
+
+  if (errorUrls.length === 0) {
+    Logger.log('再実行対象のエラーURLはありません');
+    return { processedThisRun: 0, successCount: 0, hasMoreUrls: false };
+  }
+
+  Logger.log(`エラーURL数: ${errorUrls.length}件`);
+
+  let processedThisRun = 0;
+  let successCount = 0;
+
+  for (let i = 0; i < errorUrls.length; i++) {
+    // 実行時間をチェック
+    const currentTime = new Date().getTime();
+    const elapsedTime = (currentTime - startTime) / 1000;
+
+    if (elapsedTime > (EXECUTION_TIME_LIMIT - SAFETY_MARGIN)) {
+      Logger.log(`実行時間制限に近づきました。経過時間: ${Math.round(elapsedTime)}秒`);
+      return { processedThisRun, successCount, hasMoreUrls: true };
+    }
+
+    const errorData = errorUrls[i];
+
+    try {
+      Logger.log(`エラーURL再実行中 ${i + 1}/${errorUrls.length}: ${errorData.url} (経過: ${Math.round(elapsedTime)}秒, 累計: ${progress.totalProcessed + processedThisRun})`);
+
+      // スクレイピング実行
+      const hotelData = scrapeHotelFromUrl(errorData.url);
+
+      // 結果シートの該当行を更新
+      updateResultSheetRow(config.SPREADSHEET_ID, config.SHEET_NAME, errorData.rowIndex, hotelData);
+
+      // マスタシートの最終クロール日時を更新
+      const masterRowIndex = findMasterSheetRowByUrl(config.SPREADSHEET_ID, config.MASTER_SHEET_NAME, errorData.url);
+      if (masterRowIndex > 0) {
+        updateLastCrawledAt(config.SPREADSHEET_ID, config.MASTER_SHEET_NAME, masterRowIndex, new Date());
+      }
+
+      successCount++;
+      processedThisRun++;
+
+      // 10件ごとに進捗を保存
+      if (processedThisRun % 10 === 0) {
+        saveErrorRetryProgress(progress.totalProcessed + processedThisRun);
+        Logger.log(`エラーURL再実行進捗保存: ${progress.totalProcessed + processedThisRun}件処理済み`);
+      }
+
+      // リクエスト間隔を空ける
+      if (i < errorUrls.length - 1) {
+        Utilities.sleep(config.REQUEST_DELAY);
+      }
+
+    } catch (error) {
+      Logger.log(`エラーURL再実行失敗: ${errorData.url} - ${error.toString()}`);
+
+      // エラー情報を更新
+      const updatedErrorData = {
+        title: 'ERROR (RETRY)',
+        score: '',
+        total: '',
+        address: '',
+        tel: '',
+        totalRooms: '',
+        url: errorData.url,
+        error: `${error.toString()} (再実行: ${new Date().toLocaleString()})`
+      };
+
+      updateResultSheetRow(config.SPREADSHEET_ID, config.SHEET_NAME, errorData.rowIndex, updatedErrorData);
+      processedThisRun++;
+    }
+  }
+
+  return { processedThisRun, successCount, hasMoreUrls: false };
+}
+
+/**
+ * エラーURL再実行進捗を取得
+ */
+function getErrorRetryProgress() {
+  const properties = PropertiesService.getScriptProperties();
+  const totalProcessed = parseInt(properties.getProperty('ERROR_RETRY_TOTAL_PROCESSED') || '0');
+  const lastExecutionTime = properties.getProperty('ERROR_RETRY_LAST_EXECUTION_TIME');
+
+  return {
+    totalProcessed: totalProcessed,
+    lastExecutionTime: lastExecutionTime
+  };
+}
+
+/**
+ * エラーURL再実行進捗を保存
+ */
+function saveErrorRetryProgress(totalProcessed) {
+  const properties = PropertiesService.getScriptProperties();
+  properties.setProperties({
+    'ERROR_RETRY_TOTAL_PROCESSED': totalProcessed.toString(),
+    'ERROR_RETRY_LAST_EXECUTION_TIME': new Date().toISOString()
+  });
+}
+
+/**
+ * エラーURL再実行進捗をクリア
+ */
+function clearErrorRetryProgress() {
+  const properties = PropertiesService.getScriptProperties();
+  properties.deleteProperty('ERROR_RETRY_TOTAL_PROCESSED');
+  properties.deleteProperty('ERROR_RETRY_LAST_EXECUTION_TIME');
+  Logger.log('エラーURL再実行進捗をクリアしました。');
+}
+
+/**
+ * 次回エラーURL再実行をスケジュール
+ */
+function scheduleNextErrorRetryExecution() {
+  try {
+    Logger.log('次回エラーURL再実行スケジュール開始');
+
+    // 既存のトリガーを削除
+    clearErrorRetryProgressTriggers();
+
+    // 現在時刻から2分後に実行するトリガーを作成（余裕を持たせる）
+    const triggerTime = new Date();
+    triggerTime.setMinutes(triggerTime.getMinutes() + 2);
+
+    const trigger = ScriptApp.newTrigger('retryErrorUrlsWithProgressTracking')
+      .timeBased()
+      .at(triggerTime)
+      .create();
+
+    Logger.log(`次回エラーURL再実行時刻をスケジュール: ${triggerTime.toLocaleString()}`);
+    Logger.log(`トリガーID: ${trigger.getUniqueId()}`);
+
+    // トリガーが正常に作成されたかを確認
+    const allTriggers = ScriptApp.getProjectTriggers();
+    const retryTriggers = allTriggers.filter(t => t.getHandlerFunction() === 'retryErrorUrlsWithProgressTracking');
+    Logger.log(`現在のエラーURL再実行トリガー数: ${retryTriggers.length}件`);
+
+  } catch (error) {
+    Logger.log('エラーURL再実行トリガー設定エラー: ' + error.toString());
+
+    // 再試行のためのより詳細なエラー情報を記録
+    Logger.log(`エラー詳細: ${JSON.stringify({
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    })}`);
+
+    throw error; // エラーを再スローして上位で処理
+  }
+}
+
+/**
+ * エラーURL再実行進捗管理用トリガーをクリア
+ */
+function clearErrorRetryProgressTriggers() {
+  try {
+    const triggers = ScriptApp.getProjectTriggers();
+    let deletedCount = 0;
+
+    triggers.forEach(trigger => {
+      if (trigger.getHandlerFunction() === 'retryErrorUrlsWithProgressTracking') {
+        try {
+          ScriptApp.deleteTrigger(trigger);
+          deletedCount++;
+          Logger.log(`トリガー削除: ID=${trigger.getUniqueId()}`);
+        } catch (deleteError) {
+          Logger.log(`トリガー削除エラー: ID=${trigger.getUniqueId()}, エラー=${deleteError.toString()}`);
+        }
+      }
+    });
+
+    if (deletedCount > 0) {
+      Logger.log(`${deletedCount}個のエラーURL再実行進捗管理トリガーを削除しました。`);
+    } else {
+      Logger.log('削除対象のエラーURL再実行進捗管理トリガーはありませんでした。');
+    }
+
+  } catch (error) {
+    Logger.log(`トリガークリアエラー: ${error.toString()}`);
+  }
+}
+
+/**
+ * エラーURL再実行状況表示
+ */
+function showErrorRetryStatus() {
+  const progress = getErrorRetryProgress();
+  const config = getConfig();
+
+  Logger.log('=== エラーURL再実行状況 ===');
+  Logger.log(`累計処理件数: ${progress.totalProcessed}件`);
+  Logger.log(`最終実行時刻: ${progress.lastExecutionTime || '未実行'}`);
+
+  try {
+    const errorUrls = getErrorUrlsFromResultSheet(config.SPREADSHEET_ID, config.SHEET_NAME);
+    Logger.log(`現在のエラーURL数: ${errorUrls.length}件`);
+
+    const triggers = ScriptApp.getProjectTriggers().filter(t =>
+      t.getHandlerFunction() === 'retryErrorUrlsWithProgressTracking'
+    );
+    Logger.log(`スケジュール済みエラーURL再実行トリガー数: ${triggers.length}件`);
+
+    if (errorUrls.length > 0) {
+      Logger.log('エラーURL一覧（最初の5件）:');
+      errorUrls.slice(0, 5).forEach((errorData, index) => {
+        Logger.log(`  ${index + 1}. ${errorData.url} (行: ${errorData.rowIndex})`);
+      });
+
+      if (errorUrls.length > 5) {
+        Logger.log(`  ... その他 ${errorUrls.length - 5}件`);
+      }
+    }
+
+  } catch (error) {
+    Logger.log('エラーURL再実行状況取得エラー: ' + error.toString());
   }
 }

@@ -284,37 +284,77 @@ function collectNewHotels() {
 
 #### エラーURL再実行の主要機能
 
-結果シートでERRORになったURLを自動的に検出し、再実行・更新を行う機能です。
+結果シートでERRORになったURLを自動的に検出し、再実行・更新を行う機能です。**実行時間制限対応**により、大量のエラーURLがある場合でも安全に処理できます。
 
 ```javascript
-// エラーURL再実行
+// エラーURL再実行（時間制限対応）
 function retryErrorUrls() {
-  // 結果シートからERRORになったURLを検出して再実行
+  // 結果シートからERRORになったURLを検出して再実行（5分制限対応）
+}
+
+// 進捗管理機能付きエラーURL再実行（推奨）
+function retryErrorUrlsWithProgressTracking() {
+  // 進捗を保存しながら時間制限に対応してエラーURLを再実行
 }
 
 // 日次実行用（自動トリガーで実行される）
 function dailyRetryErrorUrls() {
-  // 毎日自動的にエラーURLを再実行
+  // 毎日自動的にエラーURLを再実行（進捗管理機能付き）
 }
 ```
+
+#### 実行時間制限対応の特徴
+
+- **5分制限対応**: Google Apps Scriptの6分制限を考慮し、5分で処理を一時停止
+- **自動継続**: 未処理のエラーURLがある場合、1分後に自動的に処理を再開
+- **進捗保存**: 10件処理ごとに進捗を保存し、中断時も安全
+- **状況確認**: 処理状況をリアルタイムで確認可能
+- **手動制御**: 自動実行の停止・再開が可能
 
 #### error_url_retry.gs の関数一覧
 
 | 関数名 | 説明 | 用途 |
 |--------|------|------|
-| `retryErrorUrls()` | エラーURL再実行 | 結果シートのERRORになったURLを再実行・更新 |
+| `retryErrorUrls()` | エラーURL再実行（時間制限対応） | 結果シートのERRORになったURLを再実行・更新 |
+| `retryErrorUrlsWithProgressTracking()` | 進捗管理付きエラーURL再実行（推奨） | 大量エラーURL対応、自動継続機能付き |
+| `processErrorUrlsWithTimeLimit(startTime, errorUrls)` | 時間制限付きエラーURL処理 | 5分制限内でエラーURLを処理 |
+| `processErrorUrlsWithProgressTracking(startTime, progress)` | 進捗管理付きエラーURL処理 | 進捗保存機能付きエラーURL処理 |
 | `getErrorUrlsFromResultSheet(id, name)` | エラーURL取得 | 結果シートからエラーURLリストを取得 |
 | `updateResultSheetRow(id, name, row, data)` | 結果更新 | 結果シートの指定行をホテルデータで更新 |
 | `findMasterSheetRowByUrl(id, name, url)` | マスタ検索 | マスタシートから指定URLの行番号を検索 |
-| `dailyRetryErrorUrls()` | 日次エラー再実行 | エラーURL再実行（日次実行用） |
-| `showErrorRetryStatus()` | エラー再実行状況表示 | エラーURL再実行の実行状況表示 |
+| `dailyRetryErrorUrls()` | 日次エラー再実行 | エラーURL再実行（日次実行用、進捗管理付き） |
+| `showErrorRetryStatus()` | エラー再実行状況表示（新版） | 進捗管理機能付きの実行状況表示 |
+| `showErrorRetryStatusLegacy()` | エラー再実行状況表示（統合版） | 従来機能と新機能の統合ステータス |
 | `setupErrorRetryTrigger()` | エラー再実行トリガー設定 | エラーURL再実行トリガー設定 |
 | `clearErrorRetryTriggers()` | エラー再実行トリガークリア | エラーURL再実行トリガーをクリア |
+| `getErrorRetryProgress()` | エラー再実行進捗取得 | 進捗管理機能の状況取得 |
+| `saveErrorRetryProgress(totalProcessed)` | エラー再実行進捗保存 | 処理済み件数の保存 |
+| `clearErrorRetryProgress()` | エラー再実行進捗クリア | 完了時の進捗リセット |
+| `scheduleNextErrorRetryExecution()` | 次回エラー再実行スケジュール | 時間切れ時の自動継続設定 |
+| `clearErrorRetryProgressTriggers()` | 進捗管理トリガークリア | 進捗管理用トリガーの削除 |
+
+#### エラーURL再実行の推奨実行方法
+
+```javascript
+// 大量エラーURL処理の場合（推奨）
+retryErrorUrlsWithProgressTracking();
+
+// 状況確認
+showErrorRetryStatus();
+
+// 従来機能との統合ステータス確認
+showErrorRetryStatusLegacy();
+
+// 手動停止
+clearErrorRetryProgressTriggers();
+```
 
 #### 注意事項
 
 - エラーURL再実行機能は、結果シートにERRORと表示されたURLのみを対象に再実行を行います。
 - 日次実行用のトリガーを設定することで、毎日自動的にエラーURLの再実行が可能です。
+- 大量のエラーURLがある場合は`retryErrorUrlsWithProgressTracking()`の使用を推奨します。
+- 進捗管理機能により、処理中断時も安全に再開できます。
 
 ### テスト機能（tests/new_hotel_collector_tests.gs）
 
@@ -404,9 +444,48 @@ function dailyRetryErrorUrls() {
 
 ### エラーURL再実行機能の場合
 
-1. `retryErrorUrls()`を実行してエラーURLを再実行
-2. 日次自動実行を設定する場合は`setupErrorRetryTrigger()`を実行
-3. エラー再実行の状況は`showErrorRetryStatus()`で確認
+#### エラーURL再実行の手動実行
+
+```javascript
+// 従来の一回限りの実行（時間制限対応）
+retryErrorUrls()
+
+// 進捗管理機能付き実行（大量エラーURL対応、推奨）
+retryErrorUrlsWithProgressTracking()
+```
+
+#### エラーURL再実行の日次自動実行設定
+
+1. `setupErrorRetryTrigger()`を実行
+2. 毎日10:00に自動的にエラーURL再実行が実行される
+
+#### エラーURL再実行の状況確認
+
+```javascript
+// 新機能のステータス確認
+showErrorRetryStatus()
+
+// 統合ステータス確認（従来機能＋新機能）
+showErrorRetryStatusLegacy()
+```
+
+#### エラーURL再実行の手動制御
+
+```javascript
+// 進捗管理機能の自動実行を停止
+clearErrorRetryProgressTriggers()
+
+// 日次トリガーを停止
+clearErrorRetryTriggers()
+```
+
+#### エラーURL再実行の実行時間制限対応機能
+
+- **5分制限**: Google Apps Scriptの6分制限を考慮し、5分で処理を一時停止
+- **自動継続**: 未処理のエラーURLがある場合、1分後に自動的に処理を再開
+- **進捗保存**: 10件処理ごとに進捗を保存し、中断時も安全
+- **状況確認**: `showErrorRetryStatus()`で処理状況を確認可能
+- **手動停止**: `clearErrorRetryProgressTriggers()`で自動実行を停止可能
 
 ### 実行時間制限対応機能
 
@@ -510,10 +589,12 @@ Google Apps Scriptには6分の実行時間制限があります。大量のURL�
 - **自動分割処理**: 5分で処理を一時停止し、1分後に自動継続
 - **進捗保存**: PropertiesServiceで処理状況を保存
 - **安全停止**: 処理途中でも安全に中断・再開可能
-- **状況監視**: `showExecutionStatus()`で進捗確認
-- **手動制御**: `clearProgressTriggers()`で自動実行停止
+- **状況監視**: 処理状況をリアルタイムで確認
+- **手動制御**: 自動実行停止・再開が可能
 
 #### 推奨する実行方法
+
+**通常のスクレイピング処理:**
 
 ```javascript
 // 大量URL処理の場合（推奨）
@@ -525,6 +606,28 @@ showExecutionStatus();
 // 手動停止
 clearProgressTriggers();
 ```
+
+**エラーURL再実行処理:**
+
+```javascript
+// 大量エラーURL処理の場合（推奨）
+retryErrorUrlsWithProgressTracking();
+
+// 状況確認
+showErrorRetryStatus();
+
+// 手動停止
+clearErrorRetryProgressTriggers();
+```
+
+#### 実行時間制限対応の仕組み
+
+1. **処理開始**: 開始時刻を記録
+2. **時間監視**: 各URL処理前に経過時間をチェック
+3. **自動中断**: 5分経過時点で処理を一時停止
+4. **進捗保存**: 処理済み件数をPropertiesServiceに保存
+5. **自動継続**: 1分後に自動的にトリガーで処理再開
+6. **完了処理**: 全URL処理完了時に進捗をクリアしてトリガー削除
 
 ### その他のよくある問題と解決方法
 
