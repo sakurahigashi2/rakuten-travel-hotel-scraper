@@ -1,0 +1,48 @@
+# Google Apps Script specific
+*.gs~
+.gs~
+.clasp.json
+
+# IDE files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Configuration files with sensitive data
+src/config_production.gs
+src/config_local.gs
+
+# Temporary files
+tmp/
+temp/
+
+# Node.js (if using clasp or other tools)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Package files
+*.tgz
+*.tar.gz
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output
